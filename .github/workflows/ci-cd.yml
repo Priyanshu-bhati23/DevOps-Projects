@@ -10,6 +10,7 @@ on:
 # ── Environment variables ─────────────────────────────────────────────────────
 env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/devops-project1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 jobs:
