@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s        # how often Prometheus pulls metrics from targets
+  evaluation_interval: 15s    # how often it evaluates alerting rules
+
+scrape_configs:
+
+  # Prometheus scrapes itself so you can monitor the monitor
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Flask app — hits the /metrics endpoint that prometheus-flask-exporter adds
+  - job_name: flask-app
+    static_configs:
+      - targets: ["flask-app:5000"]   # service name works because they share a network
+    metrics_path: /metrics

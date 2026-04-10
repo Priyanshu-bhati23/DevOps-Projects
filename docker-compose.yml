@@ -1,0 +1,102 @@
+version: "3.9"
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+# Data stored here persists across `docker compose down` / `up` cycles.
+# Without a volume, Redis loses all data every time the container stops.
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+# Services on the same network reach each other by service name.
+# "flask-app" can talk to "redis" at hostname "redis" — no IPs needed.
+networks:
+  backend:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+# ── Services ──────────────────────────────────────────────────────────────────
+services:
+
+  # ── Flask application ───────────────────────────────────────────────────────
+  flask-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: flask-app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"           # host_port:container_port
+    env_file:
+      - .env                  # secret values live here, never in this file
+    environment:
+      REDIS_HOST: redis       # "redis" resolves because both are on 'backend' network
+      REDIS_PORT: 6379
+    depends_on:
+      redis:
+        condition: service_healthy   # wait until Redis passes its healthcheck
+    networks:
+      - backend
+      - monitoring            # also on monitoring so Prometheus can scrape /metrics
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine     # alpine = minimal base image (~7 MB vs ~100 MB full)
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes   # AOF persistence — survives restarts
+    volumes:
+      - redis_data:/data      # named volume keeps data between container recreations
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"   # keep 7 days of metrics
+    networks:
+      - monitoring
+    depends_on:
+      - flask-app
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin   # change this in prod via .env
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
